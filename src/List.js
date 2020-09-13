@@ -74,6 +74,7 @@ export class List extends IndexedCollection {
     if (index >= 0 && index < this.size) {
       index += this._origin;
       const node = listNodeFor(this, index);
+      // 由于最底层 level === 0，所以原计算公式：index >> level & MASK 可以简化为 index & MASK 
       return node && node.array[index & MASK];
     }
     return notSetValue;
@@ -307,9 +308,11 @@ class VNode {
   }
 
   removeAfter(ownerID, level, index) {
+    // index 超出当前 level 的最大长度或者数组长度为 0 时直接返回当前 Node
     if (index === (level ? 1 << level : 0) || this.array.length === 0) {
       return this;
     }
+    // 当前 level 的索引
     const sizeIndex = ((index - 1) >>> level) & MASK;
     if (sizeIndex >= this.array.length) {
       return this;
@@ -318,6 +321,7 @@ class VNode {
     let newChild;
     if (level > 0) {
       const oldChild = this.array[sizeIndex];
+      // 递归移除每一层级的多余节点
       newChild =
         oldChild && oldChild.removeAfter(ownerID, level - SHIFT, index);
       if (newChild === oldChild && sizeIndex === this.array.length - 1) {
@@ -437,8 +441,10 @@ function updateList(list, index, value) {
   let newRoot = list._root;
   const didAlter = MakeRef();
   if (index >= getTailOffset(list._capacity)) {
+    // tail 上修改值，level 永远为 0
     newTail = updateVNode(newTail, list.__ownerID, 0, index, value, didAlter);
   } else {
+    // level 取 list 的 _level
     newRoot = updateVNode(
       newRoot,
       list.__ownerID,
@@ -453,6 +459,7 @@ function updateList(list, index, value) {
     return list;
   }
 
+  // 复用 list
   if (list.__ownerID) {
     list._root = newRoot;
     list._tail = newTail;
@@ -507,6 +514,10 @@ function updateVNode(node, ownerID, level, index, value, didAlter) {
   return newNode;
 }
 
+
+// 关键方法，返回一个可编辑的节点
+// 当 node 自身的 ownerID 等于 list 的 ownerID 时，说明时可变节点，直接返回
+// 否则拷贝当前节点并继承 list 的 ownerID，这时候他就是可编辑的
 function editableVNode(node, ownerID) {
   if (ownerID && node && ownerID === node.ownerID) {
     return node;
@@ -515,9 +526,11 @@ function editableVNode(node, ownerID) {
 }
 
 function listNodeFor(list, rawIndex) {
+  // 该方法最终返回的还是一个 VNode 类型的对象，具体取值需要再操作一步
   if (rawIndex >= getTailOffset(list._capacity)) {
     return list._tail;
   }
+  // 因为叶子结点是 VNode 节点，所以实际上最大长度是 1 << (list._level + SHIFT)
   if (rawIndex < 1 << (list._level + SHIFT)) {
     let node = list._root;
     let level = list._level;
@@ -532,6 +545,7 @@ function listNodeFor(list, rawIndex) {
 function setListBounds(list, begin, end) {
   // Sanitize begin & end using this shorthand for ToInt32(argument)
   // http://www.ecma-international.org/ecma-262/6.0/#sec-toint32
+  // begin ｜= 0 就是 begin 转化为 number 类型，比 + 的好处在于无法转化的值不会转化为 NaN
   if (begin !== undefined) {
     begin |= 0;
   }
@@ -541,18 +555,22 @@ function setListBounds(list, begin, end) {
   const owner = list.__ownerID || new OwnerID();
   let oldOrigin = list._origin;
   let oldCapacity = list._capacity;
+  // 新的起点
   let newOrigin = oldOrigin + begin;
+  // 新的容量
   let newCapacity =
     end === undefined
       ? oldCapacity
       : end < 0
-        ? oldCapacity + end
+        ? oldCapacity + end // 如果 end 是负数就代表缩容了
         : oldOrigin + end;
+  // 容量没变 直接返回原来的 list
   if (newOrigin === oldOrigin && newCapacity === oldCapacity) {
     return list;
   }
 
   // If it's going to end after it starts, it's empty.
+  // 如果新的起点比旧的容量还大，直接返回一个新的列表
   if (newOrigin >= newCapacity) {
     return list.clear();
   }
@@ -561,6 +579,8 @@ function setListBounds(list, begin, end) {
   let newRoot = list._root;
 
   // New origin might need creating a higher root.
+  // 防止现有容量不够用需要提升 trie 的深度，注意这块是在当前树的左侧添加，begin < 0
+  
   let offsetShift = 0;
   while (newOrigin + offsetShift < 0) {
     newRoot = new VNode(
@@ -570,6 +590,7 @@ function setListBounds(list, begin, end) {
     newLevel += SHIFT;
     offsetShift += 1 << newLevel;
   }
+  // 整体偏移，相当于快速移动了节点
   if (offsetShift) {
     newOrigin += offsetShift;
     oldOrigin += offsetShift;
@@ -580,12 +601,14 @@ function setListBounds(list, begin, end) {
   const oldTailOffset = getTailOffset(oldCapacity);
   const newTailOffset = getTailOffset(newCapacity);
 
+  // 树 size 不够，需要在右侧提升 size
   // New size might need creating a higher root.
   while (newTailOffset >= 1 << (newLevel + SHIFT)) {
     newRoot = new VNode(
       newRoot && newRoot.array.length ? [newRoot] : [],
       owner
     );
+    // 提升 level
     newLevel += SHIFT;
   }
 
@@ -601,9 +624,9 @@ function setListBounds(list, begin, end) {
   // Merge Tail into tree.
   if (
     oldTail &&
-    newTailOffset > oldTailOffset &&
-    newOrigin < oldCapacity &&
-    oldTail.array.length
+    newTailOffset > oldTailOffset && // 新容量条件下，tail 的位置往后移了一点，说明旧的 tail 需要挂载到 trie 了
+    newOrigin < oldCapacity && // 新的起点在旧的容量之前，不然没必要挂载旧的 trie
+    oldTail.array.length // 确保旧的 tail 中有内容
   ) {
     newRoot = editableVNode(newRoot, owner);
     let node = newRoot;
@@ -620,6 +643,7 @@ function setListBounds(list, begin, end) {
   }
 
   // If the new origin is within the tail, then we do not need a root.
+  // 起点索引大于 tail 索引，无需 root，直接使用 tail 节约空间
   if (newOrigin >= newTailOffset) {
     newOrigin -= newTailOffset;
     newCapacity -= newTailOffset;
@@ -629,11 +653,13 @@ function setListBounds(list, begin, end) {
 
     // Otherwise, if the root has been trimmed, garbage collect.
   } else if (newOrigin > oldOrigin || newTailOffset < oldTailOffset) {
+    // 缩容之后进行空间回收，节约内存
     offsetShift = 0;
 
     // Identify the new top root node of the subtree of the old root.
     while (newRoot) {
       const beginIndex = (newOrigin >>> newLevel) & MASK;
+      // 如果新的索引位于 tail 路径上，说明只需要 tail 就行了，其余的节点可以全部移除，降低一个树层级
       if ((beginIndex !== newTailOffset >>> newLevel) & MASK) {
         break;
       }

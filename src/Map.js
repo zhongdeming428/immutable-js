@@ -150,9 +150,11 @@ export class Map extends KeyedCollection {
   }
 
   __ensureOwner(ownerID) {
+    // ownerID 不变，直接返回原来的数据
     if (ownerID === this.__ownerID) {
       return this;
     }
+    // 如果没有 ownerID，返回新的数据
     if (!ownerID) {
       if (this.size === 0) {
         return emptyMap();
@@ -262,6 +264,7 @@ class ArrayMapNode {
   }
 }
 
+// 拥有的子节点数量 ≤16 ，拥有的数组长度与子节点数量一致，经由 bitmap 压缩
 class BitmapIndexedNode {
   constructor(ownerID, bitmap, nodes) {
     this.ownerID = ownerID;
@@ -351,6 +354,7 @@ class BitmapIndexedNode {
   }
 }
 
+// 拥有的子节点数量 ＞16 ，拥有的数组长度为 32
 class HashArrayMapNode {
   constructor(ownerID, count, nodes) {
     this.ownerID = ownerID;
@@ -497,6 +501,7 @@ class HashCollisionNode {
   }
 }
 
+// 叶子节点，存储 key 和 value
 class ValueNode {
   constructor(ownerID, keyHash, entry) {
     this.ownerID = ownerID;
@@ -741,6 +746,7 @@ function createNodes(ownerID, entries, key, value) {
   return node;
 }
 
+// 压缩节点，节约空间
 function packNodes(ownerID, nodes, count, excluding) {
   let bitmap = 0;
   let packedII = 0;
@@ -755,6 +761,7 @@ function packNodes(ownerID, nodes, count, excluding) {
   return new BitmapIndexedNode(ownerID, bitmap, packedNodes);
 }
 
+// 扩张节点
 function expandNodes(ownerID, nodes, bitmap, including, node) {
   let count = 0;
   const expandedNodes = new Array(SIZE);

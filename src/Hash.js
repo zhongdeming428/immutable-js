@@ -15,6 +15,7 @@ export function hash(o) {
       // The hash values for built-in constants are a 1 value for each 5-byte
       // shift region expect for the first, which encodes the value. This
       // reduces the odds of a hash collision for these common values.
+      // 每五位一字节：1000010000100001000010000100001 / 1000010000100001000010000100000
       return o ? 0x42108421 : 0x42108420;
     case 'number':
       return hashNumber(o);
