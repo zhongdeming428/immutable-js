@@ -292,6 +292,7 @@ class BitmapIndexedNode {
     if (keyHash === undefined) {
       keyHash = hash(key);
     }
+    // 当前 level 的 hash，对应 List 的当前 level index
     const keyHashFrag = (shift === 0 ? keyHash : keyHash >>> shift) & MASK;
     const bit = 1 << keyHashFrag;
     const bitmap = this.bitmap;
@@ -323,6 +324,7 @@ class BitmapIndexedNode {
       return expandNodes(ownerID, nodes, bitmap, keyHashFrag, newNode);
     }
 
+    // !newNode 代表当前时删除操作，如果现在要删除一个已经存在的叶子节点并且其同级节点数为 2，则直接返回另一个节点，压缩空间
     if (
       exists &&
       !newNode &&
@@ -337,6 +339,10 @@ class BitmapIndexedNode {
     }
 
     const isEditable = ownerID && ownerID === this.ownerID;
+    // 位图运算关键点：
+    // 当更新原来的节点时(exists && newNode)，新的 bitmap 等于原来的 bitmap
+    // 当删除原来的节点时(exists && !newNode)，新的 bitmap 等于旧的 bitmap 与当前 bit 异或，将 bitmap 中对应 bit 为 1 的那位置 0
+    // 其他情况(新增节点)直接或运算即可
     const newBitmap = exists ? (newNode ? bitmap : bitmap ^ bit) : bitmap | bit;
     const newNodes = exists
       ? newNode
